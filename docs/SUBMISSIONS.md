@@ -20,7 +20,7 @@ cd cuda-cource-2025
 ```bash
 mkdir works/<ТВ-ЛОГИН>
 ```
-Подробнее про шаблон лабораторных и структуру папок см. в [**FOLDER_STRUCTURE.md**](docs/FOLDER_STRUCTURE.md) и [**STUDENT_TEMPLATE.md**](docs/STUDENT_TEMPLATE.md).
+Подробнее про шаблон лабораторных и структуру папок см. в [**FOLDER_STRUCTURE.md**](FOLDER_STRUCTURE.md) и [**STUDENT_TEMPLATE.md**](STUDENT_TEMPLATE.md).
 
 4. Работай с лабораторными
 
