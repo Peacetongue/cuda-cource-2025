@@ -12,9 +12,33 @@
 __constant__ int d_Gx[9] = {-1, 0, 1, -2, 0, 2, -1, 0, 1};
 __constant__ int d_Gy[9] = {-1, -2, -1, 0, 0, 0, 1, 2, 1};
 
+#define TILE_SIZE 16
+
 __global__ void sobelKernel(unsigned char* input, unsigned char* output, int width, int height) {
-    int x = blockIdx.x * blockDim.x + threadIdx.x;
-    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    __shared__ unsigned char tile[TILE_SIZE + 2][TILE_SIZE + 2];
+    
+    int tx = threadIdx.x;
+    int ty = threadIdx.y;
+    int x = blockIdx.x * TILE_SIZE + tx;
+    int y = blockIdx.y * TILE_SIZE + ty;
+    
+    // Load tile with halo
+    int tile_x = x - 1;
+    int tile_y = y - 1;
+    tile_x = max(0, min(tile_x, width - 1));
+    tile_y = max(0, min(tile_y, height - 1));
+    tile[ty][tx] = input[tile_y * width + tile_x];
+    
+    if (tx < 2 && tx + TILE_SIZE < TILE_SIZE + 2) {
+        int halo_x = max(0, min(x + TILE_SIZE - 1, width - 1));
+        tile[ty][tx + TILE_SIZE] = input[tile_y * width + halo_x];
+    }
+    if (ty < 2 && ty + TILE_SIZE < TILE_SIZE + 2) {
+        int halo_y = max(0, min(y + TILE_SIZE - 1, height - 1));
+        tile[ty + TILE_SIZE][tx] = input[halo_y * width + tile_x];
+    }
+    
+    __syncthreads();
     
     if (x >= width || y >= height) return;
     
@@ -25,17 +49,16 @@ __global__ void sobelKernel(unsigned char* input, unsigned char* output, int wid
     
     int gx = 0, gy = 0;
     
-    for (int ky = -1; ky <= 1; ky++) {
-        for (int kx = -1; kx <= 1; kx++) {
-            int pixel = input[(y + ky) * width + (x + kx)];
-            int kernelIndex = (ky + 1) * 3 + (kx + 1);
+    for (int ky = 0; ky < 3; ky++) {
+        for (int kx = 0; kx < 3; kx++) {
+            int pixel = tile[ty + ky][tx + kx];
+            int kernelIndex = ky * 3 + kx;
             gx += pixel * d_Gx[kernelIndex];
             gy += pixel * d_Gy[kernelIndex];
         }
     }
     
     int magnitude = (int)sqrtf((float)(gx * gx + gy * gy));
-    
     magnitude = min(255, max(0, magnitude));
     
     output[y * width + x] = (unsigned char)magnitude;
@@ -174,9 +197,9 @@ int main(int argc, char** argv) {
         cudaMalloc(&d_output, imageSize);
         cudaMemcpy(d_input, h_input, imageSize, cudaMemcpyHostToDevice);
         
-        dim3 blockSize(16, 16);
-        dim3 gridSize((width + blockSize.x - 1) / blockSize.x,
-                      (height + blockSize.y - 1) / blockSize.y);
+        dim3 blockSize(TILE_SIZE, TILE_SIZE);
+        dim3 gridSize((width + TILE_SIZE - 1) / TILE_SIZE,
+                      (height + TILE_SIZE - 1) / TILE_SIZE);
         
         cudaEventRecord(start);
         sobelKernel<<<gridSize, blockSize>>>(d_input, d_output, width, height);
