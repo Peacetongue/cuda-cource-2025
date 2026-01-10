@@ -105,29 +105,44 @@ void prefixScan(uint32_t* d_data, int size) {
 __global__ void histogramKernel(const uint32_t* input, uint32_t* histogram, 
                                 int size, int shift) {
     
-    __shared__ uint32_t s_hist[RADIX + 1]; // +1 для избежания bank conflicts
+    const int numWarps = BLOCK_SIZE / 32;
+    __shared__ uint32_t s_warpHist[numWarps][RADIX + 1]; // +1 для избежания bank conflicts
     
     int tid = threadIdx.x;
+    int warpId = tid / 32;
+    int laneId = tid & 31;
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     
-    // обнуляем гистограмму
-    if (tid < RADIX) {
-        s_hist[tid] = 0;
+    for (int d = laneId; d < RADIX; d += 32) {
+        s_warpHist[warpId][d] = 0;
     }
     __syncthreads();
     
-    // считаем каждый элемент
+    uint32_t myDigit = RADIX; // дефолт значение
     if (idx < size) {
         uint32_t value = input[idx];
-        uint32_t digit = (value >> shift) & (RADIX - 1);
-        atomicAdd(&s_hist[digit], 1);
+        myDigit = (value >> shift) & (RADIX - 1);
+    }
+    
+    // демократия! о7
+    unsigned mask = __activemask();
+    for (int digit = 0; digit < RADIX; digit++) {
+        unsigned vote = __ballot_sync(mask, myDigit == digit);
+        int count = __popc(vote);
+        
+        if (laneId == 0) {
+            s_warpHist[warpId][digit] = count;
+        }
     }
     __syncthreads();
     
-    // записываем в глобальную память
-    // для каждого блока сохраняем отдельную гистограмму: histogram[blockIdx * RADIX + digit]
+    // суммируем
     if (tid < RADIX) {
-        histogram[blockIdx.x * RADIX + tid] = s_hist[tid];
+        uint32_t sum = 0;
+        for (int w = 0; w < numWarps; w++) {
+            sum += s_warpHist[w][tid];
+        }
+        histogram[blockIdx.x * RADIX + tid] = sum;
     }
 }
 
@@ -294,27 +309,42 @@ void radixSortInt32(int* d_data, int size) {
 __global__ void histogram64Kernel(const uint64_t* input, uint32_t* histogram, 
                                   int size, int shift) {
     
-    __shared__ uint32_t s_hist[RADIX + 1]; // +1 для избежания bank conflicts
+    const int numWarps = BLOCK_SIZE / 32;
+    __shared__ uint32_t s_warpHist[numWarps][RADIX + 1]; // +1 для избежания bank conflicts
     
     int tid = threadIdx.x;
+    int warpId = tid / 32;
+    int laneId = tid & 31;
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     
-    // обнуляем
-    if (tid < RADIX) {
-        s_hist[tid] = 0;
+    for (int d = laneId; d < RADIX; d += 32) {
+        s_warpHist[warpId][d] = 0;
     }
     __syncthreads();
     
-    // считаем
+    uint32_t myDigit = RADIX;
     if (idx < size) {
         uint64_t value = input[idx];
-        uint32_t digit = (value >> shift) & (RADIX - 1);
-        atomicAdd(&s_hist[digit], 1);
+        myDigit = (value >> shift) & (RADIX - 1);
+    }
+    
+    unsigned mask = __activemask();
+    for (int digit = 0; digit < RADIX; digit++) {
+        unsigned vote = __ballot_sync(mask, myDigit == digit);
+        int count = __popc(vote);
+        
+        if (laneId == 0) {
+            s_warpHist[warpId][digit] = count;
+        }
     }
     __syncthreads();
     
     if (tid < RADIX) {
-        histogram[blockIdx.x * RADIX + tid] = s_hist[tid];
+        uint32_t sum = 0;
+        for (int w = 0; w < numWarps; w++) {
+            sum += s_warpHist[w][tid];
+        }
+        histogram[blockIdx.x * RADIX + tid] = sum;
     }
 }
 
