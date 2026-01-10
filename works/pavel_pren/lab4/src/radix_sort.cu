@@ -166,6 +166,7 @@ __global__ void reorderKernel(const uint32_t* input, uint32_t* output,
     __shared__ uint32_t s_keys[BLOCK_SIZE]; // ключи
     __shared__ uint32_t s_digits[BLOCK_SIZE]; // разряды
     __shared__ uint32_t s_localOffsets[BLOCK_SIZE]; // локальные смещения для каждого потока
+    __shared__ uint32_t s_scan[BLOCK_SIZE * 2]; // double buffer для prefix scan
     
     int tid = threadIdx.x;
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -182,32 +183,38 @@ __global__ void reorderKernel(const uint32_t* input, uint32_t* output,
         s_keys[tid] = key;
         s_digits[tid] = digit;
     } else {
-        s_digits[tid] = 0;
+        s_digits[tid] = RADIX;
     }
     __syncthreads();
+    
+    // Для каждой цифры делаем prefix scan отдельно
+    for (int targetDigit = 0; targetDigit < RADIX; targetDigit++) {
+        s_scan[tid] = (s_digits[tid] == targetDigit) ? 1 : 0;
+        __syncthreads();
+        
+        int pout = 0, pin = 1;
+        for (int offset = 1; offset < BLOCK_SIZE; offset *= 2) {
+            pout = 1 - pout;
+            pin = 1 - pout;
+            
+            if (tid >= offset) {
+                s_scan[pout * BLOCK_SIZE + tid] = s_scan[pin * BLOCK_SIZE + tid] + s_scan[pin * BLOCK_SIZE + tid - offset];
+            } else {
+                s_scan[pout * BLOCK_SIZE + tid] = s_scan[pin * BLOCK_SIZE + tid];
+            }
+            __syncthreads();
+        }
+        
+        if (s_digits[tid] == targetDigit && idx < size) {
+            s_localOffsets[tid] = s_scan[pout * BLOCK_SIZE + tid] - 1;
+        }
+        __syncthreads();
+    }
     
     if (idx < size) {
         uint32_t myDigit = s_digits[tid];
-        
-        uint32_t localOffset = 0;
-        
-        // делим на 32 элемента (типа как варп)
-        for (int base = 0; base < BLOCK_SIZE; base += 32) {
-            int limit = min(base + 32, tid);
-            for (int i = base; i < limit; i++) {
-                if (s_digits[i] == myDigit) {
-                    localOffset++;
-                }
-            }
-        }
-        
-        s_localOffsets[tid] = localOffset;
-    }
-    __syncthreads();
-    
-    if (idx < size) {
-        uint32_t digit = s_digits[tid];
-        uint32_t globalPos = s_baseOffsets[digit] + s_localOffsets[tid];
+        uint32_t localOffset = s_localOffsets[tid];
+        uint32_t globalPos = s_baseOffsets[myDigit] + localOffset;
         output[globalPos] = s_keys[tid];
     }
 }
@@ -319,6 +326,7 @@ __global__ void reorder64Kernel(const uint64_t* input, uint64_t* output,
     __shared__ uint64_t s_keys[BLOCK_SIZE]; 
     __shared__ uint32_t s_digits[BLOCK_SIZE];
     __shared__ uint32_t s_localOffsets[BLOCK_SIZE];
+    __shared__ uint32_t s_scan[BLOCK_SIZE * 2];
     
     int tid = threadIdx.x;
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -335,31 +343,37 @@ __global__ void reorder64Kernel(const uint64_t* input, uint64_t* output,
         s_keys[tid] = key;
         s_digits[tid] = digit;
     } else {
-        s_digits[tid] = 0;
+        s_digits[tid] = RADIX;
     }
     __syncthreads();
+    
+    for (int targetDigit = 0; targetDigit < RADIX; targetDigit++) {
+        s_scan[tid] = (s_digits[tid] == targetDigit) ? 1 : 0;
+        __syncthreads();
+        
+        int pout = 0, pin = 1;
+        for (int offset = 1; offset < BLOCK_SIZE; offset *= 2) {
+            pout = 1 - pout;
+            pin = 1 - pout;
+            
+            if (tid >= offset) {
+                s_scan[pout * BLOCK_SIZE + tid] = s_scan[pin * BLOCK_SIZE + tid] + s_scan[pin * BLOCK_SIZE + tid - offset];
+            } else {
+                s_scan[pout * BLOCK_SIZE + tid] = s_scan[pin * BLOCK_SIZE + tid];
+            }
+            __syncthreads();
+        }
+        
+        if (s_digits[tid] == targetDigit && idx < size) {
+            s_localOffsets[tid] = s_scan[pout * BLOCK_SIZE + tid] - 1;
+        }
+        __syncthreads();
+    }
     
     if (idx < size) {
         uint32_t myDigit = s_digits[tid];
-        uint32_t localOffset = 0;
-        
-        // оптимизация: делим работу на проходы по 32 элемента (warp)
-        for (int base = 0; base < BLOCK_SIZE; base += 32) {
-            int limit = min(base + 32, tid);
-            for (int i = base; i < limit; i++) {
-                if (s_digits[i] == myDigit) {
-                    localOffset++;
-                }
-            }
-        }
-        
-        s_localOffsets[tid] = localOffset;
-    }
-    __syncthreads();
-    
-    if (idx < size) {
-        uint32_t digit = s_digits[tid];
-        uint32_t globalPos = s_baseOffsets[digit] + s_localOffsets[tid];
+        uint32_t localOffset = s_localOffsets[tid];
+        uint32_t globalPos = s_baseOffsets[myDigit] + localOffset;
         output[globalPos] = s_keys[tid];
     }
 }
