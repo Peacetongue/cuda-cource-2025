@@ -147,15 +147,14 @@ __global__ void sumHistogramsKernel(const uint32_t* blockHistograms, uint32_t* g
 __global__ void computeBlockOffsetsKernel(const uint32_t* blockHistograms, const uint32_t* globalOffsets, 
                                          uint32_t* blockOffsets, int numBlocks) {
     int digit = threadIdx.x;
-    int blockId = blockIdx.x;
     
     if (digit < RADIX) {
-        uint32_t offset = globalOffsets[digit];
-        // добавляем суммы из предыдущих блоков
-        for (int b = 0; b < blockId; b++) {
-            offset += blockHistograms[b * RADIX + digit];
+        uint32_t prefixSum = globalOffsets[digit];
+        
+        for (int blockId = 0; blockId < numBlocks; blockId++) {
+            blockOffsets[blockId * RADIX + digit] = prefixSum;
+            prefixSum += blockHistograms[blockId * RADIX + digit];
         }
-        blockOffsets[blockId * RADIX + digit] = offset;
     }
 }
 
@@ -247,7 +246,7 @@ void radixSortUInt32(uint32_t* d_data, int size) {
 
         prefixScan(d_globalHistogram, RADIX);
         
-        computeBlockOffsetsKernel<<<numBlocks, RADIX>>>(d_blockHistograms, d_globalHistogram, d_blockOffsets, numBlocks);
+        computeBlockOffsetsKernel<<<1, RADIX>>>(d_blockHistograms, d_globalHistogram, d_blockOffsets, numBlocks);
         CUDA_CHECK(cudaGetLastError());
         
         reorderKernel<<<numBlocks, BLOCK_SIZE>>>(current, next, d_blockOffsets, size, shift);
@@ -405,7 +404,7 @@ void radixSortUInt64(uint64_t* d_data, int size) {
         
         prefixScan(d_globalHistogram, RADIX);
         
-        computeBlockOffsetsKernel<<<numBlocks, RADIX>>>(d_blockHistograms, d_globalHistogram, d_blockOffsets, numBlocks);
+        computeBlockOffsetsKernel<<<1, RADIX>>>(d_blockHistograms, d_globalHistogram, d_blockOffsets, numBlocks);
         CUDA_CHECK(cudaGetLastError());
         
         reorder64Kernel<<<numBlocks, BLOCK_SIZE>>>(current, next, d_blockOffsets, size, shift);
