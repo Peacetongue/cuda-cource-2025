@@ -166,14 +166,12 @@ __global__ void reorderKernel(const uint32_t* input, uint32_t* output,
     __shared__ uint32_t s_keys[BLOCK_SIZE]; // ключи
     __shared__ uint32_t s_digits[BLOCK_SIZE]; // разряды
     __shared__ uint32_t s_localOffsets[BLOCK_SIZE]; // локальные смещения для каждого потока
-    __shared__ uint32_t s_digitCounts[RADIX]; // счетчики для каждого разряда
     
     int tid = threadIdx.x;
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (tid < RADIX) {
         s_baseOffsets[tid] = blockOffsets[blockIdx.x * RADIX + tid];
-        s_digitCounts[tid] = 0;
     }
     __syncthreads();
     
@@ -204,7 +202,6 @@ __global__ void reorderKernel(const uint32_t* input, uint32_t* output,
         }
         
         s_localOffsets[tid] = localOffset;
-        atomicMax(&s_digitCounts[myDigit], localOffset + 1);
     }
     __syncthreads();
     
@@ -322,14 +319,12 @@ __global__ void reorder64Kernel(const uint64_t* input, uint64_t* output,
     __shared__ uint64_t s_keys[BLOCK_SIZE]; 
     __shared__ uint32_t s_digits[BLOCK_SIZE];
     __shared__ uint32_t s_localOffsets[BLOCK_SIZE];
-    __shared__ uint32_t s_digitCounts[RADIX];
     
     int tid = threadIdx.x;
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     
     if (tid < RADIX) {
         s_baseOffsets[tid] = blockOffsets[blockIdx.x * RADIX + tid];
-        s_digitCounts[tid] = 0;
     }
     __syncthreads();
     
@@ -359,7 +354,6 @@ __global__ void reorder64Kernel(const uint64_t* input, uint64_t* output,
         }
         
         s_localOffsets[tid] = localOffset;
-        atomicMax(&s_digitCounts[myDigit], localOffset + 1);
     }
     __syncthreads();
     
